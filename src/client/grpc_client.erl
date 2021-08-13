@@ -89,10 +89,10 @@
          , gun_opts => gun:opts()
          }.
 
--define(headers(Encoding, MessageType, Timeout, MD),
+-define(headers(Encoding, MessageType, _Timeout, MD),
         [{<<"grpc-encoding">>, Encoding},
          {<<"grpc-message-type">>, MessageType},
-         {<<"grpc-timeout">>, ms2timeout(Timeout)},
+         %{<<"grpc-timeout">>, ms2timeout(Timeout)},
          {<<"content-type">>, <<"application/grpc+proto">>},
          {<<"user-agent">>, <<"grpc-erlang/0.1.0">>},
          {<<"te">>, <<"trailers">>} | maps:to_list(MD)]).
