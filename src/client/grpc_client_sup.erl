@@ -20,6 +20,7 @@
 -behaviour(supervisor).
 
 -export([ create_channel_pool/3
+        , spec/3
         , stop_channel_pool/1
         ]).
 
@@ -29,6 +30,8 @@
 
 -define(APP_SUP, grpc_sup).
 
+-type name() :: term().
+
 -type options() :: grpc_client:client_opts()
                  | #{pool_size => non_neg_integer()}.
 
@@ -36,9 +39,17 @@
 %% APIs
 %%--------------------------------------------------------------------
 
--spec create_channel_pool(term(), uri_string:uri_string(), options())
+-spec create_channel_pool(name(), uri_string:uri_string(), options())
     -> supervisor:startchild_ret().
 create_channel_pool(Name, URL, Opts) ->
+    case spec(Name, URL, Opts) of
+        {ok, Spec} -> supervisor:start_child(?APP_SUP, Spec);
+        {error, Reason} -> {error, Reason}
+    end.
+
+-spec spec(name(), uri_string:uri_string(), options())
+    -> {ok, supervisor:child_spec()} | {error, term()}.
+spec(Name, URL, Opts) ->
     case uri_string:parse(URL) of
         #{scheme := Scheme, host := Host, port := Port} ->
             Server = {Scheme, Host, Port},
@@ -48,11 +59,11 @@ create_channel_pool(Name, URL, Opts) ->
                      shutdown => infinity,
                      type     => supervisor,
                      modules  => [?MODULE]},
-            supervisor:start_child(?APP_SUP, Spec);
+            {ok, Spec};
         {error, Reason, _} -> {error, Reason}
     end.
 
--spec stop_channel_pool(term()) -> ok | {error, term()}.
+-spec stop_channel_pool(name()) -> ok | {error, term()}.
 stop_channel_pool(Name) ->
     case supervisor:terminate_child(?APP_SUP, Name) of
         ok ->
