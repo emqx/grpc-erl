@@ -29,16 +29,25 @@
 
 -type listen_on() :: {inet:ip_address(), inet:port_number()} | inet:port_number().
 -type services() :: #{protos := [module()],
-                      services := #{ServiceName :: atom() := HandlerModule :: module()}
+                      services := #{ServiceName :: atom() => HandlerModule :: module()}
                      }.
 
--type option() :: {ssl_options, ssl:server_option()}
+-type option() :: {ssl_options, ssl:tls_server_option()}
                 | {ranch_opts, ranch:opts()}
                 | {cowboy_opts, cowboy_http2:opts()}.
 
--type metadata() :: map().
+%% TODO: Figure out types.
+-type metadata_key() :: term().
+-type metadata_value() :: term().
+-type metadata() :: #{metadata_key() => metadata_value()}.
 
--export_type([metadata/0]).
+%% NOTE: Expected by generated code.
+-type options() :: grpc_client:options().
+
+-export_type([ metadata/0
+             , metadata_key/0
+             , metadata_value/0
+             , options/0]).
 
 %%--------------------------------------------------------------------
 %% APIs

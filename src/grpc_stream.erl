@@ -35,11 +35,13 @@
         , handle_out/3
         ]).
 
+-export_type([stream/0, error_response/0]).
+
 -type stream() :: #{ req           := cowboy_req:req()
                    , rest          := binary()
                    , metadata      := map()
                    , encoding      := grpc_frame:encoding()
-                   , compression   := grpc_frame:compression()
+                   , compression   := grpc_frame:encoding() %% TODO: Figure out types
                    , decoder       := function()
                    , encoder       := function()
                    , handler       := {atom(), atom()}
@@ -48,6 +50,9 @@
                    , output_stream := boolean()
                    , client_info   := map()
                    }.
+
+%% TODO: Figure out types.
+-type error_response() :: term().
 
 %%--------------------------------------------------------------------
 %% APIs

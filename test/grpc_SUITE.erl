@@ -61,7 +61,7 @@ init_per_group(GrpName, Cfg) ->
                     https ->
                         #{gun_opts =>
                           #{transport => ssl,
-                            transport_opts => [{cacertfile, CA}]}};
+                            tls_opts => [{cacertfile, CA}, {verify, verify_none}]}};
                     _ -> #{}
                 end,
     SvrAddr = case GrpName of

@@ -32,7 +32,7 @@
 
 -type name() :: term().
 
--type options() :: grpc_client:client_opts()
+-type options() :: grpc_client:options()
                  | #{pool_size => non_neg_integer()}.
 
 %%--------------------------------------------------------------------

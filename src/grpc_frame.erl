@@ -22,6 +22,8 @@
         , split/2
         ]).
 
+-export_type([encoding/0]).
+
 -type encoding() :: identity | gzip.
 
 -define(GRPC_ERROR(Status, Message), {grpc_error, {Status, Message}}).
