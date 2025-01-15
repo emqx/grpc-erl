@@ -59,7 +59,7 @@
           %% XXX: Bad impl.
           encoding :: grpc_frame:encoding(),
           %% Streams
-          streams :: #{reference() := stream()},
+          streams :: #{gun:stream_ref() => stream()},
           %% Client options
           client_opts :: client_opts(),
           %% Flush timer reference
@@ -118,7 +118,7 @@
         #{protocols => [http2],
           connect_timeout => 5000,
           http2_opts => #{keepalive => 60000},
-          transport_opts => [{nodelay, true}]
+          tcp_opts => [{nodelay, true}]
          }).
 
 -define(STREAM_RESERVED_TIMEOUT, 15000).
@@ -387,7 +387,7 @@ handle_info({timeout, TRef, flush_streams_sendbuff},
 handle_info({gun_up, GunPid, http2}, State = #state{gun_pid = GunPid}) ->
     {noreply, State};
 
-handle_info({gun_down, GunPid, http2, Reason, KilledStreamRefs, _},
+handle_info({gun_down, GunPid, http2, Reason, KilledStreamRefs},
             State = #state{gun_pid = GunPid, streams = Streams}) ->
     Nowts = erlang:system_time(millisecond),
     %% Reply killed streams error
@@ -633,44 +633,23 @@ do_connect(State = #state{server = {_, Host, Port}, client_opts = ClientOpts}) -
     GunOpts = maps:get(gun_opts, ClientOpts, #{}),
     case gun:open(Host, Port, GunOpts) of
         {ok, Pid} ->
-            case gun_await_up_helper(Pid) of
+            %% NOTE
+            %% By default, `gun` retries failed connection attempts 5 times, with
+            %% 5 seconds delay in-between. Give it a bit more spare time, just in
+            %% case.
+            MRef = monitor(process, Pid),
+            case gun:await_up(Pid, 60_000, MRef) of
                 {ok, _Protocol} ->
-                    MRef = monitor(process, Pid),
                     State#state{mref = MRef, gun_pid = Pid};
-                {error, Reason} ->
-                    gun:close(Pid),
-                    {error, Reason}
+                {error, {down, Reason}} ->
+                    {error, Reason};
+                {error, timeout} ->
+                    _ = gun:close(Pid),
+                    {error, timeout}
             end;
         {error, Reason} ->
             {error, Reason}
     end.
-
-gun_await_up_helper(Pid) ->
-    gun_await_up_helper(Pid, 50, undefined).
-gun_await_up_helper(_Pid, 0, LastRet) ->
-   LastRet ;
-gun_await_up_helper(Pid, Retry, LastRet) ->
-    case gun:await_up(Pid, 100) of
-        {ok, _} = Ret ->
-            Ret;
-        {error, timeout} ->
-            case gun_last_reason(Pid) of
-                undefined ->
-                    gun_await_up_helper(Pid, Retry-1, LastRet);
-                Reason ->
-                    {error, Reason}
-            end;
-        {error, _} = Ret ->
-            Ret
-    end.
-
-gun_last_reason(Pid) ->
-    %% XXX: Hard-coded to get detailed reason, because gun
-    %% does not expose it with a function
-    lists:last(
-      tuple_to_list(
-        element(2, sys:get_state(Pid)))
-     ).
 
 %%--------------------------------------------------------------------
 %% Helpers
