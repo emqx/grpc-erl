@@ -98,7 +98,7 @@ decode(Base64) when byte_size(Base64) rem 4 == 2 ->
 decode(Base64) ->
     base64:decode(Base64).
 
--spec maybe_encode_headers(grpc:meta_data()) -> grpc:meta_data().
+-spec maybe_encode_headers(grpc:metadata()) -> grpc:metadata().
 %% @doc Encode the header values to Base64 for those headers that have the name 
 %% ending with "-bin".
 maybe_encode_headers(Headers) ->

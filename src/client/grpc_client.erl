@@ -42,6 +42,9 @@
         , code_change/3
         ]).
 
+-export_type([ options/0
+             , grpcstream/0]).
+
 -record(state, {
           %% Pool name
           pool,
