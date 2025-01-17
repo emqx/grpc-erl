@@ -42,7 +42,8 @@
         , code_change/3
         ]).
 
--export_type([ options/0
+-export_type([ client_options/0
+             , options/0
              , grpcstream/0]).
 
 -record(state, {
@@ -64,7 +65,7 @@
           %% Streams
           streams :: #{gun:stream_ref() => stream()},
           %% Client options
-          client_opts :: client_opts(),
+          client_opts :: client_options(),
           %% Flush timer reference
           flush_timer_ref :: undefined | reference()
          }).
@@ -110,7 +111,7 @@
 
 -type server() :: {http | https, string(), inet:port_number()}.
 
--type client_opts() ::
+-type client_options() ::
         #{ encoding => grpc_frame:encoding()
          , gun_opts => gun:opts()
          , stream_batch_size => non_neg_integer()
@@ -155,7 +156,7 @@
 %% APIs
 %%--------------------------------------------------------------------
 
--spec start_link(term(), pos_integer(), server(), client_opts())
+-spec start_link(term(), pos_integer(), server(), client_options())
     -> {ok, pid()} | ignore | {error, term()}.
 start_link(Pool, Id, Server, Opts) when is_map(Opts)  ->
     gen_server:start_link(?MODULE, [Pool, Id, Server, Opts], []).
