@@ -21,7 +21,8 @@
 -include("grpc.hrl").
 
 %% APIs
--export([unary/4]).
+-export([ unary/4
+        , health_check/2]).
 
 -export([ open/3
         , send/2
@@ -67,7 +68,9 @@
           %% Client options
           client_opts :: client_options(),
           %% Flush timer reference
-          flush_timer_ref :: undefined | reference()
+          flush_timer_ref :: undefined | reference(),
+          %% Gun connection state
+          gun_state :: up | down
          }).
 
 -type request() :: map().
@@ -266,17 +269,33 @@ recv(#{def        := Def,
             {IsMore, Msgs}
     end.
 
+-spec health_check(pid(), options()) -> ok | {error, term()}.
+health_check(Worker, Options) ->
+    ConnectTimeout = connect_timeout(Options),
+    try
+        call(Worker, health_check, Options#{timeout => ConnectTimeout})
+    catch
+        exit:{timeout, _Details} ->
+            {error, timeout};
+        exit:Reason when
+            Reason =:= normal;
+            Reason =:= {shutdown, normal}
+        ->
+            %% Race condition: gun went down while checking health?
+            %% Try again.
+            health_check(Worker, Options);
+        exit:Reason ->
+            {error, {grpc_client_down, Reason}}
+    end.
+
 %%--------------------------------------------------------------------
 %% gen_server callbacks
 %%--------------------------------------------------------------------
 
 init([Pool, Id, Server = {_, _, _}, ClientOpts0]) ->
     Encoding = maps:get(encoding, ClientOpts0, identity),
-    Opts = maps:put(
-             gun_opts,
-             maps:merge(?DEFAULT_GUN_OPTS, maps:get(gun_opts, ClientOpts0, #{})),
-             ClientOpts0
-            ),
+    GunOpts = maps:get(gun_opts, ClientOpts0, #{}),
+    Opts = ClientOpts0#{gun_opts => maps:merge(?DEFAULT_GUN_OPTS, GunOpts)},
     true = gproc_pool:connect_worker(Pool, {Pool, Id}),
     {ok, ensure_clean_timer(
            #state{
@@ -286,7 +305,8 @@ init([Pool, Id, Server = {_, _, _}, ClientOpts0]) ->
               server = Server,
               encoding = Encoding,
               streams = #{},
-              client_opts = Opts}), {continue, connect}}.
+              client_opts = Opts,
+              gun_state = down}), {continue, connect}}.
 
 handle_continue(connect, State) ->
     case do_connect(State) of
@@ -300,9 +320,20 @@ handle_continue(connect, State) ->
 handle_call(Req, From, State = #state{gun_pid = undefined}) ->
     case do_connect(State) of
         {error, Reason} ->
-            {reply, {error, Reason}, State};
+            {reply, {error, Reason}, State#state{gun_state = down}};
         NState ->
             handle_call(Req, From, NState)
+    end;
+
+handle_call(health_check, _From, State = #state{gun_state = up}) ->
+    {reply, ok, State};
+
+handle_call(health_check, _From, State = #state{gun_state = down}) ->
+    case do_connect(State) of
+        {error, Reason} ->
+            {reply, {error, Reason}, State#state{gun_state = down}};
+        NState ->
+            {reply, ok, NState}
     end;
 
 handle_call({open, #{path := Path,
@@ -342,10 +373,10 @@ handle_call(_Req = {send, StreamRef, Bytes, IsFin},
                           ?DEFAULT_STREAMING_BATCH_SIZE
                          ),
             NStream = maybe_send_data(NBytes, IsFin, StreamRef, Stream, GunPid, BatchSize),
-            NStreams = maps:put(StreamRef, NStream, Streams),
+            NStreams = Streams#{StreamRef => NStream},
             {reply, ok, ensure_flush_timer(State#state{streams = NStreams})};
         #{st := {closed, _RS}} ->
-            {reply, {error, closed}, State};
+            {reply, {error, closed}, State#state{gun_state = down}};
         undefined ->
             {reply, {error, not_found}, State};
         _S ->
@@ -389,7 +420,7 @@ handle_info({timeout, TRef, flush_streams_sendbuff},
     {noreply, ensure_flush_timer(flush_streams(Nowts, State))};
 
 handle_info({gun_up, GunPid, http2}, State = #state{gun_pid = GunPid}) ->
-    {noreply, State};
+    {noreply, State#state{gun_state = up}};
 
 handle_info({gun_down, GunPid, http2, Reason, KilledStreamRefs},
             State = #state{gun_pid = GunPid, streams = Streams}) ->
@@ -401,7 +432,8 @@ handle_info({gun_down, GunPid, http2, Reason, KilledStreamRefs},
               gen_server:reply(From, {error, {connection_down, Reason}})
         end, Hangs)
     end, [], maps:with(KilledStreamRefs, Streams)),
-    {noreply, State#state{streams = maps:without(KilledStreamRefs, Streams)}};
+    {noreply, State#state{streams = maps:without(KilledStreamRefs, Streams),
+                          gun_state = down}};
 
 handle_info({'DOWN', MRef, process, GunPid, Reason},
             State = #state{mref = MRef, gun_pid = GunPid, streams = Streams}) ->
@@ -412,7 +444,9 @@ handle_info({'DOWN', MRef, process, GunPid, Reason},
               gen_server:reply(From, {error, {connection_down, Reason}})
         end, Hangs)
     end, [], Streams),
-    {noreply, State#state{gun_pid = undefined, streams = #{}}};
+    {noreply, State#state{gun_pid = undefined,
+                          streams = #{},
+                          gun_state = down}};
 
 handle_info(Info, State = #state{streams = Streams}) when is_tuple(Info) ->
     Ls = [gun_response, gun_trailers, gun_data, gun_error],
@@ -644,7 +678,7 @@ do_connect(State = #state{server = {_, Host, Port}, client_opts = ClientOpts}) -
             MRef = monitor(process, Pid),
             case gun:await_up(Pid, 60_000, MRef) of
                 {ok, _Protocol} ->
-                    State#state{mref = MRef, gun_pid = Pid};
+                    State#state{mref = MRef, gun_pid = Pid, gun_state = up};
                 {error, {down, Reason}} ->
                     {error, Reason};
                 {error, timeout} ->

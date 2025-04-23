@@ -22,6 +22,7 @@
 -export([ create_channel_pool/3
         , spec/3
         , stop_channel_pool/1
+        , workers/1
         ]).
 
 -export([ start_link/3
@@ -71,6 +72,10 @@ stop_channel_pool(Name) ->
             ok = supervisor:delete_child(?APP_SUP, Name);
         R -> R
     end.
+
+-spec workers(name()) -> list().
+workers(Name) ->
+    gproc_pool:active_workers(Name).
 
 %%--------------------------------------------------------------------
 %% Callbacks
