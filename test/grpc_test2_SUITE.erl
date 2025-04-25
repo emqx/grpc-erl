@@ -23,6 +23,7 @@
 -include_lib("common_test/include/ct.hrl").
 
 -define(SERVER_NAME, server).
+-define(SERVER_ADDR, "http://127.0.0.1:10000").
 -define(CHANN_NAME, channel).
 
 -define(LOG(Fmt, Args), io:format(standard_error, Fmt, Args)).
@@ -32,22 +33,30 @@
 %%--------------------------------------------------------------------
 
 all() ->
-    [t_deadline].
+    [t_deadline, t_health_check].
 
 init_per_suite(Cfg) ->
     _ = application:ensure_all_started(grpc),
-    Services = #{protos => [grpc_test_pb],
-                 services => #{'Test' => test_svr}
-                },
-    SvrAddr = "http://127.0.0.1:10000",
-    {ok, _} = grpc:start_server(?SERVER_NAME, 10000, Services, []),
-    {ok, _} = grpc_client_sup:create_channel_pool(?CHANN_NAME, SvrAddr, #{}),
-    Cfg.
+    Services = #{protos => [grpc_test_pb], services => #{'Test' => test_svr}},
+    [{services, Services} | Cfg].
 
 end_per_suite(_Cfg) ->
+    _ = application:stop(grpc).
+
+init_per_testcase(t_deadline, Cfg) ->
+    {ok, _} = grpc:start_server(?SERVER_NAME, 10000, ?config(services, Cfg), []),
+    {ok, _} = grpc_client_sup:create_channel_pool(?CHANN_NAME, ?SERVER_ADDR, #{}),
+    Cfg;
+init_per_testcase(t_health_check, Cfg) ->
+    %% The case will handle the channel pool creation and server start by itself
+    Cfg.
+
+end_per_testcase(t_deadline, _Cfg) ->
     _ = grpc_client_sup:stop_channel_pool(?CHANN_NAME),
     _ = grpc:stop_server(?SERVER_NAME),
-    _ = application:stop(grpc).
+    ok;
+end_per_testcase(t_health_check, _Cfg) ->
+    ok.
 
 %%--------------------------------------------------------------------
 %% Tests
@@ -65,3 +74,28 @@ t_deadline(_) ->
     after 3000 ->
               ok
     end.
+
+t_health_check(Cfg) ->
+    Services = ?config(services, Cfg),
+    {ok, _} = grpc:start_server(?SERVER_NAME, 10000, Services, []),
+    {ok, _} = grpc_client_sup:create_channel_pool(?CHANN_NAME, ?SERVER_ADDR, #{}),
+
+    WorkersHealthCheck =
+        fun(Worker) ->
+            case grpc_client:health_check(Worker, #{channel => ?CHANN_NAME}) of
+                ok -> true;
+                _ -> false
+            end
+        end,
+
+    WorkersPid = [WorkerPid || {_, WorkerPid} <- grpc_client_sup:workers(?CHANN_NAME)],
+
+    ?assert(lists:all(WorkersHealthCheck, WorkersPid)),
+
+
+    grpc:stop_server(?SERVER_NAME),
+    ?assertNot(lists:all(WorkersHealthCheck, WorkersPid)),
+
+    _ = grpc_client_sup:stop_channel_pool(?CHANN_NAME),
+
+    ok.
