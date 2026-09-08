@@ -336,6 +336,23 @@ recv(#{def        := Def,
             {ok, Msgs}
     end.
 
+-doc """
+Sets the client owning the stream to send replies back to the caller via async messages.
+
+With `once` mode, only one such message is sent and then the stream "forgets" about the
+caller.  Same as calling `recv` with `infinity` timeout, and without blocking.  Errors are
+also forwarded.  If the associated `grpc_client` process dies, a `DOWN` message is
+received.
+
+With `active` mode, any queued messages and all future messages are forwarded to the
+caller, which must decode `{ok, _}` with `map_recv_async_reply/2`.  Errors are also
+forwarded.  If the associated `grpc_client` process dies, a `DOWN` message is received.
+If the caller wishes to stop receiving messages and monitoring the `grpc_client` process,
+it must explicitly demonitor the returned handle with `erlang:demonitor`.
+
+Sent messages are of the form
+`{grpc_reply, Handle, {ok, [binary() | eos_msg()]} | {error, any()}}`
+""".
 -spec async_install_receiver(grpcstream(), recv_async_opts()) -> reference().
 async_install_receiver(GStream, Opts) when
     map_get(mode, Opts) == once;
