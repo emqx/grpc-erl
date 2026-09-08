@@ -398,6 +398,7 @@ health_check(Worker, Options) ->
 %%--------------------------------------------------------------------
 
 init([Pool, Id, Server = {_, _, _}, ClientOpts0]) ->
+    set_label({grpc_client, Pool, Id}),
     Encoding = maps:get(encoding, ClientOpts0, identity),
     GunOpts = maps:get(gun_opts, ClientOpts0, #{}),
     Opts = ClientOpts0#{gun_opts => maps:merge(?DEFAULT_GUN_OPTS, GunOpts)},
@@ -1093,3 +1094,9 @@ ms2timeout(Ms) when Ms > 1000 ->
     [integer_to_list(Ms div 1000), $S];
 ms2timeout(Ms) ->
     [integer_to_list(Ms), $m].
+
+-if(OTP_RELEASE >= 27).
+set_label(Label) -> proc_lib:set_label(Label).
+-else.
+set_label(_Label) -> ok.
+-endif.
