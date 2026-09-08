@@ -65,6 +65,21 @@ end_per_testcase(_TestCase, _Cfg) ->
     ok.
 
 %%--------------------------------------------------------------------
+%% Helper fns
+%%--------------------------------------------------------------------
+
+receive_n(N, Handle, Stream) ->
+    do_receive_n(N, Handle, Stream, []).
+
+do_receive_n(N, _Handle, _Stream, Acc) when N =< 0 ->
+    lists:append(lists:reverse(Acc));
+do_receive_n(N, Handle, Stream, Acc0) ->
+    {grpc_reply, _, {ok, Msgs0}} = ?assertReceive({grpc_reply, Handle, _}),
+    Msgs = grpc_client:map_recv_async_reply(Stream, Msgs0),
+    NMsgs = length(Msgs),
+    do_receive_n(N - NMsgs, Handle, Stream, [Msgs | Acc0]).
+
+%%--------------------------------------------------------------------
 %% Tests
 %%--------------------------------------------------------------------
 
@@ -472,5 +487,80 @@ do_t_recv_async_active(Opts) ->
     exit(ClientPid2, kill),
 
     ?assertReceive({'DOWN', ReplyAlias2, process, ClientPid2, _}),
+
+    ok.
+
+t_recv_sync_active_large_payload(_) ->
+    Services = #{protos => [grpc_test_pb], services => #{'Test' => test2_svr}},
+    {ok, _} = grpc:start_server(?SERVER_NAME, 10000, Services,
+                                [{ranch_opts, #{shutdown => brutal_kill}}]),
+    {ok, _} = grpc_client_sup:create_channel_pool(?CHANN_NAME, ?SERVER_ADDR, #{}),
+    TestPidBin = iolist_to_binary(pid_to_list(self())),
+
+    {ok, Stream1} =
+        test_client:test_stream_out(#{<<"test_pid">> => TestPidBin},
+                                    #{channel => ?CHANN_NAME,
+                                      timeout => 2000}
+                                   ),
+    {grpc_req_enter, _HandlerPid1, GRPCReq1, _Meta1} =
+        ?assertReceive({grpc_req_enter, _, _, _}),
+
+    HugeSize = 1 bsl 20,
+    NMessages = 10,
+    HugeMessages =
+        lists:map(
+          fun(N) ->
+                  NBin = integer_to_binary(N),
+                  HugePayload = binary:copy(NBin, HugeSize),
+                  #{message => HugePayload}
+          end, lists:seq(1, NMessages)),
+    lists:map(fun(Msg) -> grpc_stream:reply(GRPCReq1, [Msg]) end, HugeMessages),
+    ct:sleep(100),
+
+    {ok, Received1} = grpc_client:recv(Stream1),
+    NReceived1 = length(Received1),
+    ct:pal("received ~b", [NReceived1]),
+    ?assertEqual(NMessages, NReceived1),
+    ?assertEqual(HugeMessages, Received1),
+
+    ok.
+
+t_recv_async_active_large_payload(_) ->
+    Services = #{protos => [grpc_test_pb], services => #{'Test' => test2_svr}},
+    {ok, _} = grpc:start_server(?SERVER_NAME, 10000, Services,
+                                [{ranch_opts, #{shutdown => brutal_kill}}]),
+    {ok, _} = grpc_client_sup:create_channel_pool(?CHANN_NAME, ?SERVER_ADDR, #{}),
+    TestPidBin = iolist_to_binary(pid_to_list(self())),
+
+    {ok, Stream1} =
+        test_client:test_stream_out(#{<<"test_pid">> => TestPidBin},
+                                    #{channel => ?CHANN_NAME,
+                                      timeout => 2000}
+                                   ),
+    {grpc_req_enter, _HandlerPid1, GRPCReq1, _Meta1} =
+        ?assertReceive({grpc_req_enter, _, _, _}),
+
+    HugeSize = 1 bsl 20,
+    NMessages = 10,
+    HugeMessages =
+        lists:map(
+          fun(N) ->
+                  NBin = integer_to_binary(N),
+                  HugePayload = binary:copy(NBin, HugeSize),
+                  #{message => HugePayload}
+          end, lists:seq(1, NMessages)),
+    lists:map(fun(Msg) -> grpc_stream:reply(GRPCReq1, [Msg]) end, HugeMessages),
+
+    Opts = #{mode => active},
+    Handle1 = grpc_client:async_install_receiver(Stream1, Opts),
+
+    lists:map(fun(Msg) -> grpc_stream:reply(GRPCReq1, [Msg]) end, HugeMessages),
+
+    Received1 = receive_n(2 * NMessages, Handle1, Stream1),
+    NReceived1 = length(Received1),
+    ct:pal("received ~b", [NReceived1]),
+    ?assertNotReceive({grpc_reply, _, _}),
+    ?assertEqual(2 * NMessages, NReceived1),
+    ?assertEqual(HugeMessages ++ HugeMessages, Received1),
 
     ok.

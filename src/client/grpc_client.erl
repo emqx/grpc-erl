@@ -719,17 +719,18 @@ stream_handle({gun_data, _GunPid, _StreamRef, nofin, Data},
     NData = <<Acc/binary, Data/binary>>,
     case grpc_frame:split(NData, Encoding) of
         {Rest, []} ->
-            {ok, Stream#{recvbuff => Rest}};
+            {ok, Stream#{recvbuff := Rest}};
         {Rest, Frames} ->
-            case clean_hangs(Stream#{recvbuff => Rest}) of
+            case clean_hangs(Stream#{recvbuff := Rest}) of
                 #{hangs := [], ?active_owner := ?undefined, mqueue := MQueue} = NStream ->
-                    {ok, NStream#{mqueue => MQueue ++ Frames}};
+                    {ok, NStream#{mqueue := MQueue ++ Frames}};
                 #{?active_owner := Caller, mqueue := MQueue} = NStream when
                       Caller /= ?undefined
                 ->
-                    {ok, [{reply, Caller, {ok, MQueue ++ Frames}}], NStream};
-                #{hangs := [{From, _}|NHangs], mqueue := MQueue} = NStream ->
-                    {ok, [{reply, From, {ok, MQueue ++ Frames}}], NStream#{hangs => NHangs}}
+                    {ok, [{reply, Caller, {ok, MQueue ++ Frames}}], NStream#{mqueue := []}};
+                #{hangs := [{_From, _}|_NHangs] = Hangs, mqueue := MQueue} = NStream ->
+                    Replies = lists:map(fun({From, _}) -> {reply, From, {ok, MQueue ++ Frames}} end, Hangs),
+                    {ok, Replies, NStream#{hangs := [], mqueue := []}}
             end
     end;
 stream_handle({gun_data, _GunPid, _StreamRef, fin, Data},
@@ -742,7 +743,7 @@ stream_handle({gun_data, _GunPid, _StreamRef, fin, Data},
             handle_remote_closed([], Stream);
         {<<>>, Frames} ->
             MQueue = maps:get(mqueue, Stream),
-            handle_remote_closed([], Stream#{recvbuff => <<>>, mqueue => MQueue ++ Frames})
+            handle_remote_closed([], Stream#{recvbuff := <<>>, mqueue := MQueue ++ Frames})
     end;
 stream_handle({gun_error, _GunPid, _StreamRef, {stream_error, no_error, 'Stream reset by server.'}},
               Stream = #{st := {_LS, closed}, mqueue := MQueue}) when MQueue =/= [] ->
