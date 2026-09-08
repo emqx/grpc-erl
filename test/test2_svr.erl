@@ -35,6 +35,8 @@ test_stream_out(Req, Meta) ->
     receive
         {'EXIT', _, Reason} ->
             TestPid ! {grpc_exit_signal, Reason},
-            exit(Reason)
+            exit(Reason);
+        continue ->
+            ok
     end,
     {ok, Req}.
