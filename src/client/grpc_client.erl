@@ -196,7 +196,10 @@
                        , def := def()
                        }.
 
--type recv_async_opts() :: #{mode := recv_async_mode()}.
+-type recv_async_opts() :: #{
+    mode := recv_async_mode(),
+    reply_fn => {function(), [term()]}
+}.
 -type recv_async_mode() :: once | active.
 
 -dialyzer({nowarn_function, [have_buffered_bytes/1]}).
@@ -359,6 +362,7 @@ async_install_receiver(GStream, Opts) when
     ok = gen_server:cast(ClientPid, RecvAsync),
     ReplyAlias.
 
+-spec map_recv_async_reply(grpcstream(), [binary() | eos_msg()]) -> [map() | eos_msg()].
 map_recv_async_reply(GStream, Frames) when is_list(Frames) ->
     #{def := Def} = GStream,
     Unmarshal = maps:get(unmarshal, Def),
