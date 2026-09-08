@@ -870,6 +870,11 @@ handle_recv_async(#install_receiver{mode = once} = RecvAsync, State0) ->
               State0)
     end;
 handle_recv_async(#install_receiver{mode = active} = RecvAsync, State0) ->
+    %% With active recv mode, we want a single owner to receive all future messages from
+    %% the stream until it dies.  If the owner of the stream dies, we currently don't
+    %% quite care as likely a new owner will be spawned and will open a fresh stream
+    %% anyway.  If there's a desire to avoid losing messages after an owner dies, then one
+    %% may provide a reply fn that stores those elsewhere, e.g., in ETS.
     #install_receiver{dest = Caller, stream_ref = StreamRef} = RecvAsync,
     #state{streams = Streams} = State0,
     case maps:find(StreamRef, Streams) of
