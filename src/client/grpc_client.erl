@@ -597,6 +597,8 @@ unknown_stream_ref_log_level({gun_error, _, _, {stream_error,no_error,'Stream re
     debug;
 unknown_stream_ref_log_level({gun_error, _, _, {closed,{error,closed}}}) ->
     debug;
+unknown_stream_ref_log_level({gun_error, _, _, {badstate,"The stream cannot be found."}}) ->
+    debug;
 unknown_stream_ref_log_level(_) ->
     warning.
 
