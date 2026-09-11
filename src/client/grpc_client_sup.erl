@@ -87,16 +87,24 @@ start_link(Name, Server, Opts) ->
 init([Name, Server, Opts]) ->
     Size = pool_size(Opts),
     ok = ensure_pool(Name, hash, [{size, Size}]),
-    {ok, {{one_for_one, 10, 3600}, [
-        begin
-            ensure_pool_worker(Name, {Name, I}, I),
-            #{id => {Name, I},
-              start => {grpc_client, start_link, [Name, I, Server, Opts]},
-              restart => permanent,
-              shutdown => 5_000,
-              type => worker,
-              modules => [grpc_client]}
-        end || I <- lists:seq(1, Size)]}}.
+    SupFlags = #{
+        strategy => one_for_one,
+        %% Allow whole pool dying simultaneously at least once.
+        intensity => 10 + Size,
+        period => 60
+    },
+    Children =
+        [
+         begin
+             ensure_pool_worker(Name, {Name, I}, I),
+             #{id => {Name, I},
+               start => {grpc_client, start_link, [Name, I, Server, Opts]},
+               restart => permanent,
+               shutdown => 5_000,
+               type => worker,
+               modules => [grpc_client]}
+         end || I <- lists:seq(1, Size)],
+    {ok, {SupFlags, Children}}.
 
 %% @private
 ensure_pool(Name, Type, Opts) ->

@@ -564,3 +564,51 @@ t_recv_async_active_large_payload(_) ->
     ?assertEqual(HugeMessages ++ HugeMessages, Received1),
 
     ok.
+
+%% checks when the server closes the connection with data that is not a valid proto
+%% message.
+t_misbehaving_server(_) ->
+    Services = #{protos => [grpc_test_pb], services => #{'Test' => test2_svr}},
+    {ok, _} = grpc:start_server(?SERVER_NAME, 10000, Services,
+                                [{ranch_opts, #{shutdown => brutal_kill}}]),
+    {ok, _} = grpc_client_sup:create_channel_pool(?CHANN_NAME, ?SERVER_ADDR, #{}),
+    TestPidBin = iolist_to_binary(pid_to_list(self())),
+
+
+    %% once
+    {ok, Stream1} =
+        test_client:test_stream_out(#{<<"test_pid">> => TestPidBin},
+                                    #{channel => ?CHANN_NAME,
+                                      timeout => 2000}
+                                   ),
+    {grpc_req_enter, _HandlerPid1, GRPCReq1, _Meta1} =
+        ?assertReceive({grpc_req_enter, _, _, _}),
+    Handle1 = grpc_client:async_install_receiver(Stream1, #{mode => once}),
+    #{req := InnerReq1} = GRPCReq1,
+    cowboy_req:stream_body(<<"Not found\n">>, fin, InnerReq1),
+
+    {grpc_reply, _, {ok, Res1}} = ?assertReceive({grpc_reply, Handle1, _}),
+    ?assertMatch(
+       {raw, <<"Not found\n">>},
+       lists:keyfind(raw, 1, Res1)
+      ),
+
+    %% active
+    {ok, Stream2} =
+        test_client:test_stream_out(#{<<"test_pid">> => TestPidBin},
+                                    #{channel => ?CHANN_NAME,
+                                      timeout => 2000}
+                                   ),
+    {grpc_req_enter, _HandlerPid2, GRPCReq2, _Meta2} =
+        ?assertReceive({grpc_req_enter, _, _, _}),
+    Handle2 = grpc_client:async_install_receiver(Stream2, #{mode => active}),
+    #{req := InnerReq2} = GRPCReq2,
+    cowboy_req:stream_body(<<"Not found\n">>, fin, InnerReq2),
+
+    {grpc_reply, _, {ok, Res2}} = ?assertReceive({grpc_reply, Handle2, _}),
+    ?assertMatch(
+       {raw, <<"Not found\n">>},
+       lists:keyfind(raw, 1, Res2)
+      ),
+
+    ok.
