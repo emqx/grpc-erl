@@ -103,6 +103,7 @@
 -type response() :: map().
 
 -type eos_msg() :: {eos, list()}.
+-type raw_msg() :: {raw, binary()}.
 
 -type options() ::
         #{ channel => term()
@@ -314,15 +315,14 @@ recv(GStream) ->
     recv(GStream, #{}).
 
 -spec recv(grpcstream(), timeout() | options())
-    -> {ok, [response() | eos_msg()]}
+    -> {ok, [response() | raw_msg() | eos_msg()]}
      | {error, term()} | no_return().
 recv(GStream, Timeout) when is_integer(Timeout) ->
     recv(GStream, #{timeout => Timeout});
-recv(#{def        := Def,
+recv(#{def        := _Def,
        client_pid := ClientPid,
-       stream_ref := StreamRef}, Options) ->
+       stream_ref := StreamRef} = GStream, Options) ->
     Timeout = timeout(Options),
-    Unmarshal = maps:get(unmarshal, Def),
     EndTS = case Timeout of
                 infinity -> infinity;
                 _ -> erlang:system_time(millisecond) + Timeout
@@ -330,9 +330,7 @@ recv(#{def        := Def,
     case call(ClientPid, {read, StreamRef, EndTS}, Options) of
         {error, _} = E -> E;
         {ok, Frames} ->
-            Msgs = lists:map(fun({eos, Trailers}) -> {eos, Trailers};
-                         (Bin) -> Unmarshal(Bin)
-                   end, Frames),
+            Msgs = map_recv_async_reply(GStream, Frames),
             {ok, Msgs}
     end.
 
@@ -379,13 +377,16 @@ async_install_receiver(GStream, Opts) when
     ok = gen_server:cast(ClientPid, RecvAsync),
     ReplyAlias.
 
--spec map_recv_async_reply(grpcstream(), [binary() | eos_msg()]) -> [map() | eos_msg()].
+-spec map_recv_async_reply(grpcstream(), [binary() | raw_msg() | eos_msg()]) ->
+          [response() | raw_msg() | eos_msg()].
 map_recv_async_reply(GStream, Frames) when is_list(Frames) ->
     #{def := Def} = GStream,
     Unmarshal = maps:get(unmarshal, Def),
     lists:map(
       fun({eos, Trailers}) ->
               {eos, Trailers};
+         ({raw, Bin}) ->
+              {raw, Bin};
          (Bin) ->
               Unmarshal(Bin)
       end,
@@ -755,14 +756,16 @@ stream_handle({gun_data, _GunPid, _StreamRef, nofin, Data},
             end
     end;
 stream_handle({gun_data, _GunPid, _StreamRef, fin, Data},
-               Stream = #{st := {_LS, open},
+               Stream0 = #{st := {_LS, open},
                          recvbuff := Acc,
                          encoding := Encoding}) ->
     NData = <<Acc/binary, Data/binary>>,
     case grpc_frame:split(NData, Encoding) of
-        {<<>>, []} ->
+        {Rest, []} ->
+            Stream = maybe_append_raw_data(Rest, Stream0),
             handle_remote_closed([], Stream);
-        {<<>>, Frames} ->
+        {Rest, Frames} ->
+            Stream = maybe_append_raw_data(Rest, Stream0),
             MQueue = maps:get(mqueue, Stream),
             handle_remote_closed([], Stream#{recvbuff := <<>>, mqueue := MQueue ++ Frames})
     end;
@@ -773,6 +776,13 @@ stream_handle({gun_error, _GunPid, _StreamRef, Reason}, Stream) ->
     {shutdown, Reason, Stream};
 stream_handle(Info, Stream) ->
     ?LOG(error, "Unexecpted stream event: ~p, stream ~0p", [Info, Stream]).
+
+maybe_append_raw_data(<<"">>, Stream) ->
+    Stream;
+maybe_append_raw_data(<<Raw/binary>>, Stream0) ->
+    #{mqueue := MQueue0} = Stream0,
+    MQueue = MQueue0 ++ [{raw, Raw}],
+    Stream0#{mqueue := MQueue}.
 
 handle_remote_closed(Trailers, Stream = #{st := {closed, _}}) ->
     case clean_hangs(Stream#{st => {closed, closed}}) of
