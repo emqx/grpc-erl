@@ -1029,6 +1029,7 @@ maybe_send_data(Bytes, IsFin, StreamRef,
             Stream#{sendbuff := IolistData, sendbuff_size := IolistSize}
     end.
 
+-spec trailers_to_error(trailers()) -> stream_closed_without_any_response | {atom(), binary()}.
 trailers_to_error([]) ->
     stream_closed_without_any_response;
 trailers_to_error(Trailers) ->
